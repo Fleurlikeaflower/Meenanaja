@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Forest - Frieren Butterfly Effect</title>
+    <!-- โหลดไลบรารี p5.js และ MediaPipe Pose จาก CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050b14;
+            font-family: 'Sarabun', sans-serif;
+        }
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffffff;
+            font-size: 24px;
+            z-index: 10;
+            text-shadow: 0 0 10px #00ffff;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">กำลังโหลดระบบเวทมนตร์และกล้อง...</div>
+    <div id="canvas-container"></div>
+
+    <!-- ซ่อน Video element ของกล้องไว้เพราะเราจะเรนเดอร์ผ่าน p5.js หรือใช้ภาพเบื้องหลัง -->
+    <video id="webcam" class="input_video" style="display:none;" playsinline></video>
+
+    <script>
+        let videoElement;
+        let pose;
+        let camera;
+        let poses = []; // เก็บข้อมูลท่าทางจาก MediaPipe
+        let sparkles = [];
+        let butterflies = [];
+        let activeStates = {}; // ติดตามสถานะการทำงานและดีเลย์ของผู้เล่นแต่ละคน
+
+        function setup() {
+            let canvas = createCanvas(windowWidth, windowHeight);
+            canvas.parent('canvas-container');
+
+            // สร้างละอองเวทมนตร์พื้นหลัง (Sparkles)
+            for (let i = 0; i < 150; i++) {
+                sparkles.push({
+                    x: random(width),
+                    y: random(height),
+                    size: random(1, 4),
+                    speed: random(0.5, 2),
+                    alpha: random(50, 200)
+                });
+            }
+
+            // ตั้งค่า MediaPipe Pose
+            videoElement = document.getElementById('webcam');
+            
+            pose = new Pose({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }
+            });
+
+            pose.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false,
+                smoothSegmentation: false,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            pose.onResults(onPoseResults);
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({ image: videoElement });
+                },
+                width: 1280,
+                height: 720
+            });
+
+            camera.start().then(() => {
+                document.getElementById('loading').style.display = 'none';
+            }).catch(err => {
+                document.getElementById('loading').innerText = 'ไม่สามารถเปิดกล้องได้ กรุณาตรวจสอบสิทธิ์การใช้งานกล้อง';
+                console.error(err);
+            });
+        }
+
+        function onPoseResults(results) {
+            if (results.poseLandmarks) {
+                poses = [results.poseLandmarks]; // เก็บโครงกระดูกผู้เล่น
+            } else {
+                poses = [];
+            }
+        }
+
+        function draw() {
+            background(5, 11, 20, 200); // พื้นหลังมืดสลัวสไตล์แฟนตาซี
+
+            // 1. วาดฉากป่าและละอองเวทมนตร์พื้นหลัง
+            drawBackgroundForest();
+
+            // 2. ตรวจจับท่าทางและแสดงเอฟเฟควงแหวนเวท + ผีเสื้อ
+            let currentTime = millis();
+
+            if (poses.length > 0) {
+                let landmarks = poses[0];
+                
+                // ตรวจสอบท่าทาง: สมมติว่าใช้จุดไหล่ (11, 12) และข้อมือ (15, 16) เพื่อเช็คการยกมือ/กางแขน
+                let leftWrist = landmarks[15];
+                let rightWrist = landmarks[16];
+                let leftShoulder = landmarks[11];
+                let rightShoulder = landmarks[12];
+                let hip = landmarks[23]; // จุดสะโพกเพื่อระบุตำแหน่งตัวผู้เล่น
+
+                // เงื่อนไขทำท่าทาง: ข้อมืออยู่สูงกว่าหรือระดับเดียวกับไหล่ (เช่น กางแขน/ชูมือ)
+                let isPerformingAction = (leftWrist.y < leftShoulder.y || rightWrist.y < rightShoulder.y);
+
+                if (isPerformingAction) {
+                    activeStates.lastActiveTime = currentTime;
+                    activeStates.isActive = true;
+
+                    // แปลงพิกัด MediaPipe (0-1) เป็นพิกัดหน้าจอ Canvas (สะท้อนกระจกแนวนอน)
+                    let posX = (1 - hip.x) * width;
+                    let posY = hip.y * height;
+
+                    // วาดวงแหวนเวทสไตล์ Frieren
+                    drawFrierenMagicCircle(posX, posY, currentTime);
+
+                    // ปล่อยฝูงผีเสื้อออกมาบินรอบตัว
+                    if (frameCount % 5 === 0 && butterflies.length < 30) {
+                        butterflies.push({
+                            x: posX + random(-50, 50),
+                            y: posY + random(-50, 50),
+                            targetX: posX + random(-200, 200),
+                            targetY: posY + random(-200, 200),
+                            size: random(15, 30),
+                            color: color(random(100, 255), random(100, 200), 255, 220),
+                            angle: random(TWO_PI),
+                            speed: random(0.02, 0.05)
+                        });
+                    }
+                }
+            }
+
+            // จัดการดีเลย์ 3 วินาที (3000 มิลลิวินาที) ก่อนให้เอฟเฟคจางหาย
+            if (activeStates.isActive && (currentTime - activeStates.lastActiveTime > 3000)) {
+                activeStates.isActive = false;
+            }
+
+            // วาดและอัปเดตฝูงผีเสื้อ
+            for (let i = butterflies.length - 1; i >= 0; i5, i--) { // แก้ไขลูป
+                // ให้ลูปถูกต้อง:
+            }
+            // เขียนลูปผีเสื้อแบบถูกต้อง:
+            for (let i = butterflies.length - 1; i >= 0; i--) {
+                let b = butterflies[i];
+                
+                // ถ้าไม่ได้ทำท่าทางแล้ว ให้ค่อยๆ ลดจำนวนผีเสื้อลง (Fade out)
+                if (!activeStates.isActive) {
+                    butterflies.splice(i, 1);
+                    continue;
+                }
+
+                // เคลื่อนที่ผีเสื้อแบบพริ้วไหว
+                b.angle += b.speed;
+                b.x += sin(b.angle) * 2;
+                b.y += cos(b.angle) * 1.5;
+
+                drawButterfly(b.x, b.y, b.size, b.color);
+            }
+        }
+
+        function drawBackgroundForest() {
+            // วาดละอองเวทมนตร์สีทองลอยฟุ้ง
+            noStroke();
+            for (let s of sparkles) {
+                fill(255, 215, 0, s.alpha);
+                ellipse(s.x, s.y, s.size);
+                s.y -= s.speed;
+                if (s.y < 0) s.y = height;
+            }
+
+            // วาดเงาต้นไม้จำลองที่ขอบจอ
+            fill(2, 5, 10);
+            rect(0, height - 100, width, 100);
+        }
+
+        function drawFrierenMagicCircle(x, y, t) {
+            push();
+            translate(x, y);
+            rotate(t * 0.001); // หมุนวงแหวนช้าๆ
+
+            // แสงเรืองรองรอบวงแหวน
+            noFill();
+            stroke(0, 255, 200, 100);
+            strokeWeight(15);
+            ellipse(0, 0, 250, 250);
+
+            // วงแหวนเวทชั้นนอก
+            stroke(100, 220, 255, 200);
+                    strokeWeight(3);
+            ellipse(0, 0, 220, 220);
+
+            // ลวดลายเรขาคณิตเวทมนตร์ภายใน
+            rotate(-t * 0.002);
+            stroke(200, 255, 255, 180);
+            rectMode(CENTER);
+            rect(0, 0, 160, 160);
+            
+            pop();
+        }
+
+        function drawButterfly(x, y, size, col) {
+            push();
+            translate(x, y);
+            fill(col);
+            noStroke();
+            
+            // ปีกซ้ายและขวาขยับตามเวลา
+            let wingFlap = sin(frameCount * 0.2) * 0.5 + 0.5;
+            
+            // ปีกซ้าย
+            push();
+            scale(wingFlap, 1);
+            ellipse(-size/2, 0, size, size * 1.5);
+            pop();
+
+            // ปีกขวา
+            push();
+            scale(wingFlap, 1);
+            ellipse(size/2, 0, size, size * 1.5);
+            pop();
+
+            // ตัวผีเสื้อ
+            fill(255);
+            ellipse(0, 0, size * 0.2, size * 1.2);
+            pop();
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+    </script>
+</body>
+</html>
